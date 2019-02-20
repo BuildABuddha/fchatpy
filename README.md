@@ -1,5 +1,5 @@
 # fchatpy
-A python library to create bots and chat clients for the F-Chat websocket. This library is still in heavy development, don't expect a bug-free expereince quiet yet.
+A python library to create bots and chat clients for the F-Chat websocket. This library is still in heavy development, don't expect a bug-free expereince quite yet.
 
 # How to install:
 
