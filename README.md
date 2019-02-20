@@ -5,8 +5,10 @@ A python library to create bots and chat clients for the F-Chat websocket.
 
 In bash, type the following:
 
+```
 git clone https://github.com/BuildABuddha/fchatpy.git
 sudo python3 setup.py install
+```
 
 # How to use:
 
