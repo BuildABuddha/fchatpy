@@ -441,10 +441,8 @@ class FChatClient(WebSocketClient):
         self.users[user.name.lower()] = user
 
     def remove_user(self, user):
-        # for channel in self.channels:
-        #     channel.left(user)
 
-        for channel in self.channels:
+        for channel in self.channels.keys():
             self.channels[channel].left(user)
 
         del self.users[user.name.lower()]
@@ -459,30 +457,12 @@ class FChatClient(WebSocketClient):
             return None
 
     def add_channel(self, channel):
-        # self.channels.append(channel)
-
         self.channels[channel.id.lower()] = channel
 
     def channel_exists_by_id(self, channel_id):
         return channel_id.lower() in self.channels.keys()
-        # is_found = False
-        #
-        # # for channel in self.channels:
-        # #     if channel.id == channel_id:
-        # #         is_found = True
-        #
-        # for channel in self.channels:
-        #     if self.channels[channel] == channel_id.lower():
-        #         is_found = True
-        #
-        # # return channel_id in self.channels
-        # return is_found
 
     def get_channel_by_id(self, channel_id):
-        # for channel in self.channels:
-        #     if channel.id == channel_id:
-        #         return channel
-
         try:
             return self.channels[channel_id.lower()]
         except KeyError:
