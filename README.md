@@ -1,7 +1,11 @@
 # fchatpy
-A python library to create bots and chat clients for the F-Chat websocket. This library is still in heavy development, don't expect a bug-free expereince quite yet.
+A python library to create bots and chat clients for the F-Chat websocket. This library is still in heavy development, don't expect a bug-free experience quite yet.
 
-# How to install:
+This does NOT have a GUI (yet). So unless you're planning on making one yourself, I would not use this to do your chatting on. However, it's pretty easy to make simple bots with this library, if that's what you're looking for. 
+
+This library supports nearly every F-Chat command available. So you should be able to do everything a non-chatop can do. 
+
+## How to install:
 
 In bash, type the following:
 
@@ -10,9 +14,9 @@ git clone https://github.com/BuildABuddha/fchatpy.git
 sudo python3 setup.py install
 ```
 
-If you're on Windows, I'd reccomend installing it with an IDE such as PyCharm. 
+If you're on Windows, I'd recommend installing it with an IDE such as PyCharm. 
 
-# How to use:
+## How to use:
 
 The F-Chat websocket sends and receives messages to/from every user. Each message has a "command" attached to each one. For example, if a message has the "MSG" command attached to it, that means that command is related to a message sent in a channel. If it has the "PRI" command, then it's a private message sent between two users. 
 
