@@ -1,6 +1,8 @@
 from fchatpy import fchat
 from ws4py.exc import WebSocketException
 
+# This bot will log into F-Chat and set a status. If it gets a private message, it will echo the message back. 
+# Remember to set username, password, and character on lines 28-30!
 
 class EchoBot(fchat.FChatClient):
 
