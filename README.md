@@ -10,6 +10,8 @@ git clone https://github.com/BuildABuddha/fchatpy.git
 sudo python3 setup.py install
 ```
 
+If you're on Windows, I'd reccomend installing it with an IDE such as PyCharm. 
+
 # How to use:
 
 The F-Chat websocket sends and receives messages to/from every user. Each message has a "command" attached to each one. For example, if a message has the "MSG" command attached to it, that means that command is related to a message sent in a channel. If it has the "PRI" command, then it's a private message sent between two users. 
