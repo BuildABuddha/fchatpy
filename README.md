@@ -11,7 +11,7 @@ In bash, type the following:
 
 ```
 git clone https://github.com/BuildABuddha/fchatpy.git
-sudo python3 setup.py install
+python3 -m pip install git+https://github.com/BuildABuddha/fchatpy.git --upgrade
 ```
 
 If you're on Windows, I'd recommend installing it with an IDE such as PyCharm. 
