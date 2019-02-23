@@ -10,7 +10,6 @@ This library supports nearly every F-Chat command available. So you should be ab
 In bash, type the following:
 
 ```
-git clone https://github.com/BuildABuddha/fchatpy.git
 python3 -m pip install git+https://github.com/BuildABuddha/fchatpy.git --upgrade
 ```
 
