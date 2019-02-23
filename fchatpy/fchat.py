@@ -42,7 +42,7 @@ class Channel(object):
         """
         self.id = channel_id
         self.title = title
-        self.mode = {}
+        self.mode = ""
         self.num_characters = num_characters
         self.character_list = []
         self.owner = {}
@@ -85,7 +85,8 @@ class Channel(object):
 class FChatClient(WebSocketClient):
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
     logger = logging.getLogger("fchat")
-    log_filter = {}
+    log_filter = []
+    log_pings = False
 
     def __init__(self, url, account, password, character, client_name="Python FChat Library"):
         """
@@ -107,12 +108,11 @@ class FChatClient(WebSocketClient):
 
         self.outgoing_pump_running = True
         self.connection_test_running = True
-        self.log_pings = False
 
         self.operators = []
         self.server_vars = {}
         self.users = {}  # Dictionary of online users. Key is username (lower case), object type is "User".
-        self.channels = {}
+        self.channels = {}  # Dictionary of channels. Key is channel ID (lower case), object type is "Channel".
         self.friends = []
         self.ignored_users = []
         self.outgoing_buffer = []
@@ -334,7 +334,7 @@ class FChatClient(WebSocketClient):
             self.on_IDN(data['character'])
 
         elif command == "JCH":  # User joined channel
-            self.on_JCH(data['character'], data['channel'], data['title'])
+            self.on_JCH(data['character']['identity'], data['channel'], data['title'])
 
         elif command == "KID":  # Kink data
             self.on_KID(data['type'], data['message'], data['key'], data['value'])
@@ -492,7 +492,7 @@ class FChatClient(WebSocketClient):
 
         :param ops: Array of chat operator names.
         """
-        pass
+        self.operators = ops
 
     def on_AOP(self, character):
         """
@@ -714,6 +714,7 @@ class FChatClient(WebSocketClient):
 
         room = self.get_channel_by_id(channel)
         room.num_characters = 0
+        room.mode = mode
 
         for user in users:
             user = self.get_user_by_name(user['identity'])
@@ -732,19 +733,17 @@ class FChatClient(WebSocketClient):
         """
         Indicates the given user has joined the given channel. This may also be the client's character.
 
-        :param character: Character that just joined with syntax {"Identity"}.
+        :param character: Character that just joined.
         :param channel: ID of the channel. Same as title if public, but not if private.
         :param title: Name of the channel.
         """
 
-        name = character['identity']
-
-        if name.lower() == self.character_name.lower():
+        if character.lower() == self.character_name.lower():
             # Hey, this person is us! We should check if we know this channel yet or not.
             if not self.channel_exists_by_id(channel):
                 self.add_channel(Channel(channel, title, 0))
 
-        self.get_channel_by_id(channel).joined(self.get_user_by_name(character['identity']))
+        self.get_channel_by_id(channel).joined(self.get_user_by_name(character))
 
     def on_KID(self, kid_type, message, key, value):
         """
@@ -1539,7 +1538,8 @@ class FChatClient(WebSocketClient):
             {
                 'account': self.account,
                 'ticket': self.get_ticket(),
-                'target_name': name
+                'target_name': name,
+                'note': memo
             }
         )
 

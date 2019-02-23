@@ -18,12 +18,31 @@ If you're on Windows, I'd recommend installing it with an IDE such as PyCharm.
 
 ## How to use:
 
-The F-Chat websocket sends and receives messages to/from every user. Each message has a "command" attached to each one. For example, if a message has the "MSG" command attached to it, that means that command is related to a message sent in a channel. If it has the "PRI" command, then it's a private message sent between two users. 
+The F-Chat websocket sends and receives messages to/from every user. Each message has a "command" attached to each one, followed by a JSON object of some kind. For example, if a message has the "MSG" command attached to it, that means that command is related to a message sent in a channel. If it has the "PRI" command, then it's a private message sent between two users. 
 
 For a list of commands sent to you by the server, go to: https://wiki.f-list.net/F-Chat_Server_Commands
 
 For a list of commands sent to the server by you, go to: https://wiki.f-list.net/F-Chat_Client_Commands
 
-The majority of the functions in fchat.py either send these commands to the server, or automatically run when these commands are received from the server. In the examples folder, the echobot.py file shows an example of how this can be used. In that case, it logs in, sets a status, and when a private message is received, it echos the message back to whoever sent it. 
+The majority of the functions in fchat.py either send these commands to the server, or automatically run when these commands are received from the server. For example, let's write a simple bot that just echos private messages sent to it.
+
+```python
+from fchatpy import fchat
+
+class EchoBot(fchat.FChatClient):    
+    def on_PRI(self, character, message):
+        super().on_PRI(character, message)
+        self.PRI(character, message)
+
+if __name__ == "__main__":
+    bot = EchoBot('ws://chat.f-list.net:8722', 'username', 'password', 'character')
+    bot.setup()
+    bot.connect()
+    bot.run_forever()
+```
+
+As you can see, the way you create a bot is by treating the FChatClient class like an abstract class (even though it's technically not one...) and override any function you want to add features to. In this case, we override the function on_PRI, which is called whenever we get a private message. 
+
+Once you've created your new class, you initialize it with four variables: the websocket's address, your username, your password, and the name of the character you're using. 
 
 If you want to know what a specific command for something is, or what arguments a command uses, check the documentation for that command in the fchat.py file. 

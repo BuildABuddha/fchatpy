@@ -7,7 +7,7 @@ from ws4py.exc import WebSocketException
 class EchoBot(fchat.FChatClient):
 
     # We don't want PIN, NLN, FLN or STA messages printed to the console. Add in or remove commands as you wish.
-    log_filter = {"PIN", "NLN", "FLN", "STA"}
+    log_filter = ["PIN", "NLN", "FLN", "STA"]
 
     # Here's all the stuff we want the bot to do first thing when it connects.
     def connect(self):
