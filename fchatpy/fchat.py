@@ -85,8 +85,8 @@ class Channel(object):
 class FChatClient(WebSocketClient):
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
     logger = logging.getLogger("fchat")
-    log_filter = []
-    log_pings = False
+    log_filter = []  # Override and add the three-letter commands you want to add (in string form).
+    log_pings = False   # Set to true if you want to see your outgoing pings every 30 seconds.
 
     def __init__(self, url, account, password, character, client_name="Python FChat Library"):
         """
