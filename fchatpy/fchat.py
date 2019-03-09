@@ -106,8 +106,8 @@ class FChatClient(WebSocketClient):
         self.character_name = character
         self.client_name = client_name
 
-        self.outgoing_pump_running = True
-        self.connection_test_running = True
+        self.outgoing_pump_running = False
+        self.connection_test_running = False
 
         self.operators = []
         self.server_vars = {}
@@ -145,14 +145,14 @@ class FChatClient(WebSocketClient):
         if self.get_ticket() is None:
             return False
         else:
-            # self.outgoing_thread = OutgoingPumpThread(self)
-            self.outgoing_thread.setDaemon(True)
+            self.terminate_threads()
+
+            self.outgoing_thread.setDaemon(False)
             self.outgoing_thread.start()
 
             self.reconnect_delay = 1
             self.reconnect_attempt = 0
-            # self.reconnect = PingTestThread(self)
-            self.reconnect.setDaemon(True)
+            self.reconnect.setDaemon(False)
             self.reconnect.start()
 
             return True
@@ -195,6 +195,7 @@ class FChatClient(WebSocketClient):
                 return None
 
     def outgoing_pump(self):
+        self.outgoing_pump_running = True
         while self.outgoing_pump_running:
             if len(self.outgoing_buffer):
                 self.send_one()
@@ -203,6 +204,7 @@ class FChatClient(WebSocketClient):
                 time.sleep(0.01)
 
     def connection_test(self):
+        self.connection_test_running = True
         while self.connection_test_running:
             if time.time() - self.last_ping_time > 90:
                 self.logger.info("Didn't get a ping in time. Restarting.")
@@ -216,14 +218,16 @@ class FChatClient(WebSocketClient):
         This function should be called whenever we close our client, so that threads can safely end.
         """
         try:
-            if self.outgoing_thread.isAlive:
+            if self.outgoing_thread.isAlive():
                 self.outgoing_thread.running = False
+                self.outgoing_thread.join(0.5)
         except AttributeError:
             pass
 
         try:
-            if self.reconnect.isAlive:
+            if self.reconnect.isAlive():
                 self.reconnect.running = False
+                self.reconnect.join(2)
         except AttributeError:
             pass
 
@@ -706,6 +710,7 @@ class FChatClient(WebSocketClient):
 
     def on_ICH(self, users, channel, mode):
         """
+        Initial channel data. Received in response to JCH, along with CDS.
 
         :param users: Array of objects with the syntax {'identity'}
         :param channel: ID/name of channel.
@@ -837,7 +842,6 @@ class FChatClient(WebSocketClient):
         Ping command from the server, requiring a response, to keep the connection alive.
         """
         self.PIN()
-        # self.reconnect.reset()
         self.last_ping_time = time.time()
 
     def on_PRD(self, prd_type, message, key, value):
