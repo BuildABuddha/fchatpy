@@ -147,12 +147,12 @@ class FChatClient(WebSocketClient):
         else:
             self.terminate_threads()
 
-            self.outgoing_thread.setDaemon(False)
+            # self.outgoing_thread.setDaemon(False)
             self.outgoing_thread.start()
 
             self.reconnect_delay = 1
             self.reconnect_attempt = 0
-            self.reconnect.setDaemon(False)
+            # self.reconnect.setDaemon(False)
             self.reconnect.start()
 
             return True
@@ -219,17 +219,17 @@ class FChatClient(WebSocketClient):
         """
         try:
             if self.outgoing_thread.isAlive():
-                self.outgoing_thread.running = False
+                self.outgoing_pump_running = False
                 self.outgoing_thread.join(0.5)
         except AttributeError:
-            pass
+            pass  # Thread doesn't exist yet.
 
         try:
             if self.reconnect.isAlive():
-                self.reconnect.running = False
+                self.connection_test_running = False
                 self.reconnect.join(2)
         except AttributeError:
-            pass
+            pass  # Thread doesn't exist yet.
 
     def opened(self):
         """
@@ -1238,7 +1238,7 @@ class FChatClient(WebSocketClient):
                 'character': character,
                 'ticket': self.ticket,
                 'cname': self.client_name,
-                'cversion': '0.1.0',
+                'cversion': '0.2.0',
                 'method': 'ticket'}
 
         self.send_message("IDN", data)
