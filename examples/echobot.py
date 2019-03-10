@@ -7,7 +7,7 @@ from ws4py.exc import WebSocketException
 class EchoBot(fchat.FChatClient):
 
     # We don't want PIN, NLN, FLN or STA messages printed to the console. Add in or remove commands as you wish.
-    log_filter = {"PIN", "NLN", "FLN", "STA"}
+    log_filter = ["PIN", "NLN", "FLN", "STA"]
 
     # Here's all the stuff we want the bot to do first thing when it connects.
     def connect(self):
@@ -23,11 +23,12 @@ class EchoBot(fchat.FChatClient):
 
 if __name__ == "__main__":
     running = True
+    bot = EchoBot('ws://chat.f-list.net:8722',  # test server: 8722, public server: 9722
+                  'username',  # Replace with account username
+                  'password',  # Replace with account password
+                  'character')  # Replace with character to log in with
+
     while running:
-        bot = EchoBot('ws://chat.f-list.net:8722',  # test server: 8722, public server: 9722
-                      'username',                   # Replace with account username
-                      'password',                   # Replace with account password
-                      'character')                  # Replace with character to log in with
         bot.logger.info("Connecting ...")
         try:
             bot.setup()
@@ -43,6 +44,6 @@ if __name__ == "__main__":
         except Exception:
             bot.logger.exception("Unknown exception!")
         finally:
-            bot.close()
+            bot.terminate()
             if running:
                 bot.reconnect_stagger()

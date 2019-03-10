@@ -42,7 +42,7 @@ class Channel(object):
         """
         self.id = channel_id
         self.title = title
-        self.mode = {}
+        self.mode = ""
         self.num_characters = num_characters
         self.character_list = []
         self.owner = {}
@@ -85,7 +85,8 @@ class Channel(object):
 class FChatClient(WebSocketClient):
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
     logger = logging.getLogger("fchat")
-    log_filter = {}
+    log_filter = []  # Override and add the three-letter commands you want to add (in string form).
+    log_pings = False   # Set to true if you want to see your outgoing pings every 30 seconds.
 
     def __init__(self, url, account, password, character, client_name="Python FChat Library"):
         """
@@ -105,14 +106,13 @@ class FChatClient(WebSocketClient):
         self.character_name = character
         self.client_name = client_name
 
-        self.outgoing_pump_running = True
-        self.connection_test_running = True
-        self.log_pings = False
+        self.outgoing_pump_running = False
+        self.connection_test_running = False
 
         self.operators = []
         self.server_vars = {}
         self.users = {}  # Dictionary of online users. Key is username (lower case), object type is "User".
-        self.channels = {}
+        self.channels = {}  # Dictionary of channels. Key is channel ID (lower case), object type is "Channel".
         self.friends = []
         self.ignored_users = []
         self.outgoing_buffer = []
@@ -145,14 +145,14 @@ class FChatClient(WebSocketClient):
         if self.get_ticket() is None:
             return False
         else:
-            # self.outgoing_thread = OutgoingPumpThread(self)
-            self.outgoing_thread.setDaemon(True)
+            self.terminate_threads()
+
+            self.outgoing_thread.setDaemon(False)
             self.outgoing_thread.start()
 
             self.reconnect_delay = 1
             self.reconnect_attempt = 0
-            # self.reconnect = PingTestThread(self)
-            self.reconnect.setDaemon(True)
+            self.reconnect.setDaemon(False)
             self.reconnect.start()
 
             return True
@@ -195,6 +195,7 @@ class FChatClient(WebSocketClient):
                 return None
 
     def outgoing_pump(self):
+        self.outgoing_pump_running = True
         while self.outgoing_pump_running:
             if len(self.outgoing_buffer):
                 self.send_one()
@@ -203,6 +204,7 @@ class FChatClient(WebSocketClient):
                 time.sleep(0.01)
 
     def connection_test(self):
+        self.connection_test_running = True
         while self.connection_test_running:
             if time.time() - self.last_ping_time > 90:
                 self.logger.info("Didn't get a ping in time. Restarting.")
@@ -216,14 +218,16 @@ class FChatClient(WebSocketClient):
         This function should be called whenever we close our client, so that threads can safely end.
         """
         try:
-            if self.outgoing_thread.isAlive:
+            if self.outgoing_thread.isAlive():
                 self.outgoing_thread.running = False
+                self.outgoing_thread.join(0.5)
         except AttributeError:
             pass
 
         try:
-            if self.reconnect.isAlive:
+            if self.reconnect.isAlive():
                 self.reconnect.running = False
+                self.reconnect.join(2)
         except AttributeError:
             pass
 
@@ -334,7 +338,7 @@ class FChatClient(WebSocketClient):
             self.on_IDN(data['character'])
 
         elif command == "JCH":  # User joined channel
-            self.on_JCH(data['character'], data['channel'], data['title'])
+            self.on_JCH(data['character']['identity'], data['channel'], data['title'])
 
         elif command == "KID":  # Kink data
             self.on_KID(data['type'], data['message'], data['key'], data['value'])
@@ -441,10 +445,8 @@ class FChatClient(WebSocketClient):
         self.users[user.name.lower()] = user
 
     def remove_user(self, user):
-        # for channel in self.channels:
-        #     channel.left(user)
 
-        for channel in self.channels:
+        for channel in self.channels.keys():
             self.channels[channel].left(user)
 
         del self.users[user.name.lower()]
@@ -459,30 +461,12 @@ class FChatClient(WebSocketClient):
             return None
 
     def add_channel(self, channel):
-        # self.channels.append(channel)
-
         self.channels[channel.id.lower()] = channel
 
     def channel_exists_by_id(self, channel_id):
         return channel_id.lower() in self.channels.keys()
-        # is_found = False
-        #
-        # # for channel in self.channels:
-        # #     if channel.id == channel_id:
-        # #         is_found = True
-        #
-        # for channel in self.channels:
-        #     if self.channels[channel] == channel_id.lower():
-        #         is_found = True
-        #
-        # # return channel_id in self.channels
-        # return is_found
 
     def get_channel_by_id(self, channel_id):
-        # for channel in self.channels:
-        #     if channel.id == channel_id:
-        #         return channel
-
         try:
             return self.channels[channel_id.lower()]
         except KeyError:
@@ -512,7 +496,7 @@ class FChatClient(WebSocketClient):
 
         :param ops: Array of chat operator names.
         """
-        pass
+        self.operators = ops
 
     def on_AOP(self, character):
         """
@@ -726,6 +710,7 @@ class FChatClient(WebSocketClient):
 
     def on_ICH(self, users, channel, mode):
         """
+        Initial channel data. Received in response to JCH, along with CDS.
 
         :param users: Array of objects with the syntax {'identity'}
         :param channel: ID/name of channel.
@@ -734,6 +719,7 @@ class FChatClient(WebSocketClient):
 
         room = self.get_channel_by_id(channel)
         room.num_characters = 0
+        room.mode = mode
 
         for user in users:
             user = self.get_user_by_name(user['identity'])
@@ -752,19 +738,17 @@ class FChatClient(WebSocketClient):
         """
         Indicates the given user has joined the given channel. This may also be the client's character.
 
-        :param character: Character that just joined with syntax {"Identity"}.
+        :param character: Character that just joined.
         :param channel: ID of the channel. Same as title if public, but not if private.
         :param title: Name of the channel.
         """
 
-        name = character['identity']
-
-        if name.lower() == self.character_name.lower():
+        if character.lower() == self.character_name.lower():
             # Hey, this person is us! We should check if we know this channel yet or not.
             if not self.channel_exists_by_id(channel):
                 self.add_channel(Channel(channel, title, 0))
 
-        self.get_channel_by_id(channel).joined(self.get_user_by_name(character['identity']))
+        self.get_channel_by_id(channel).joined(self.get_user_by_name(character))
 
     def on_KID(self, kid_type, message, key, value):
         """
@@ -858,7 +842,6 @@ class FChatClient(WebSocketClient):
         Ping command from the server, requiring a response, to keep the connection alive.
         """
         self.PIN()
-        # self.reconnect.reset()
         self.last_ping_time = time.time()
 
     def on_PRD(self, prd_type, message, key, value):
@@ -1559,7 +1542,8 @@ class FChatClient(WebSocketClient):
             {
                 'account': self.account,
                 'ticket': self.get_ticket(),
-                'target_name': name
+                'target_name': name,
+                'note': memo
             }
         )
 
