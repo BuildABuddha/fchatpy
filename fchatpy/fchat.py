@@ -123,8 +123,6 @@ class FChatClient(WebSocketClient):
         self.last_ping_time = time.time()
 
         self.buffer_lock = threading.Lock()
-        self.reconnect = threading.Thread(target=self.connection_test, args=())
-        self.outgoing_thread = threading.Thread(target=self.outgoing_pump, args=())
 
         # We want to initialize these variables only if they don't already exist.
         try:
@@ -145,7 +143,8 @@ class FChatClient(WebSocketClient):
         if self.get_ticket() is None:
             return False
         else:
-            self.terminate_threads()
+            self.reconnect = threading.Thread(target=self.connection_test, args=())
+            self.outgoing_thread = threading.Thread(target=self.outgoing_pump, args=())
 
             # self.outgoing_thread.setDaemon(False)
             self.outgoing_thread.start()
@@ -162,7 +161,6 @@ class FChatClient(WebSocketClient):
         This function is called first thing whenever we're connected. If you want to do something like set your status
         or join rooms immediately upon joining F-Chat, you will do it by overriding this function.
         """
-
         super().connect()
         time.sleep(3)  # We should give the client some time to initialize before trying to do stuff.
 
@@ -220,14 +218,14 @@ class FChatClient(WebSocketClient):
         try:
             if self.outgoing_thread.isAlive():
                 self.outgoing_pump_running = False
-                self.outgoing_thread.join(0.5)
+                self.outgoing_thread.join()
         except AttributeError:
             pass  # Thread doesn't exist yet.
 
         try:
             if self.reconnect.isAlive():
                 self.connection_test_running = False
-                self.reconnect.join(2)
+                self.reconnect.join()
         except AttributeError:
             pass  # Thread doesn't exist yet.
 
