@@ -1,106 +1,40 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
-from ws4py.client.threadedclient import WebSocketClient
+import websocket
+import threading
+import time
+import json
 import urllib
 import urllib.request
 import urllib.parse
-import json
-import time
 import logging
-import threading
+
+from fchatpy.user import User
+from fchatpy.channel import Channel
 
 
-class User(object):
-    """
-    This object class stores all the information needed to keep track of online users.
-    """
-
-    def __init__(self, name, gender, status, message):
-        self.name = name
-        self.gender = gender
-        self.status = status
-        self.message = message
-
-    def update(self, status, message):
-        self.status = status
-        self.message = message
-
-
-class Channel(object):
-    def __init__(self, channel_id, title, num_characters):
-        """
-        This object class helps you keep track of all the channels.
-
-        NOTICE: Channels have both an "id" and a "title". For public rooms, these will be exactly the same. For private
-        rooms, they will have the name of the room as the "title", and the "id" will be a string of numbers and
-        characters.
-
-        :param channel_id: Unique ID for the channel.
-        :param title: Title of the channel.
-        :param num_characters: Number of characters in the room, in integer form.
-        """
-        self.id = channel_id
-        self.title = title
-        self.mode = ""
-        self.num_characters = num_characters
-        self.character_list = []
-        self.owner = {}
-        self.channel_ops = []
-        self.description = {}
-
-    def update(self, channel_id, title, num_characters):
-        """
-        This command should usually only be used when getting a list of all rooms through either CHA or ORS.
-
-        :param channel_id: ID of the room in string form.
-        :param title: Title of the room in string form.
-        :param num_characters: Number of characters in the room in int form.
-        """
-        self.id = channel_id
-        self.title = title
-        self.num_characters = num_characters
-
-    def joined(self, character):
-        """
-        To be called when a character joins a room.
-
-        :param character: Character that just joined the room. Use the Character object class.
-        """
-        if character not in self.character_list:
-            self.character_list.append(character)
-            self.num_characters += 1
-
-    def left(self, character):
-        """
-        To be called when a character leaves a room.
-
-        :param character: Character that just left the room. Use the Character object class.
-        """
-        if character in self.character_list:
-            self.character_list.remove(character)
-            self.num_characters -= 1
-
-            
-class FChatClient(WebSocketClient):
+class FChatClient(websocket.WebSocketApp):
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
     logger = logging.getLogger("fchat")
     log_filter = []  # Override and add the three-letter commands you want to add (in string form).
     log_pings = False   # Set to true if you want to see your outgoing pings every 30 seconds.
+    version_num = '0.3.0'
 
-    def __init__(self, url, account, password, character, client_name="Python FChat Library"):
+    def __init__(self, account, password, character, url='wss://chat.f-list.net/chat2', client_name="Python FChat Library"):
         """
-        This object class is the main meat and potatoes of this library. Calling this will initialize a client to
+        A websocket client that connects to the F-Chat websocket and handles messagages coming to/from it. Calling this will initialize a client to
         connect one character to the F-Chat websocket.
 
-        :param url: URL of the websocket. Should be either 'ws://chat.f-list.net:9722' for the public server or
-        'ws://chat.f-list.net:8722' for the test server.
         :param account: Your account's username.
         :param password: Your account's password.
         :param character: The character you want to log in to.
+        :param url: URL of the websocket. Should be 'wss://chat.f-list.net/chat2' by default but can be redirected elsewhere.
         :param client_name: Default set to "Python FChat Library".
         """
-        WebSocketClient.__init__(self, url)
+        super().__init__(
+            url, header=None, on_open=self.on_opened, on_message=self.received_message, on_error=None,
+            on_close=self.on_closed, on_ping=None, on_pong=None, on_cont_message=None, keep_running=None,
+            get_mask_key=None, cookie=None, subprotocols=None, on_data=None, socket=None
+        )
+
         self.account = account
         self.password = password
         self.character_name = character
@@ -120,9 +54,12 @@ class FChatClient(WebSocketClient):
         self.message_delay = 1
         self.ticket_time = 0
         self.ticket = ''
-        self.last_ping_time = time.time()
+        self.last_ping_received = time.time()
+        self.last_ping_sent = time.time()
 
         self.buffer_lock = threading.Lock()
+
+        self.connected = False
 
         # We want to initialize these variables only if they don't already exist.
         try:
@@ -132,46 +69,14 @@ class FChatClient(WebSocketClient):
             self.reconnect_delay = 1
             self.reconnect_attempt = 0
 
-    def setup(self):
-        """
-        This function should be called before connecting to the websocket. It will get a ticket for connecting and
-        start up some required threads. It will also initialize some values.
-
-        :return: True if able to get a ticket, False if unable to get a ticket.
-        """
-
-        if self.get_ticket() is None:
-            return False
-        else:
-            self.reconnect = threading.Thread(target=self.connection_test, args=())
-            self.outgoing_thread = threading.Thread(target=self.outgoing_pump, args=())
-
-            # self.outgoing_thread.setDaemon(False)
-            self.outgoing_thread.start()
-
-            self.reconnect_delay = 1
-            self.reconnect_attempt = 0
-            # self.reconnect.setDaemon(False)
-            self.reconnect.start()
-
-            return True
-
-    def connect(self):
-        """
-        This function is called first thing whenever we're connected. If you want to do something like set your status
-        or join rooms immediately upon joining F-Chat, you will do it by overriding this function.
-        """
-        super().connect()
-        time.sleep(3)  # We should give the client some time to initialize before trying to do stuff.
-
-    def get_ticket(self):
+    def get_ticket(self, new_ticket=False):
         """
         Will request a ticket from F-List.net. This ticket is required to connect to the websocket.
 
         :return: If successful, returns ticket. If not successful, returns None.
         """
 
-        if self.ticket and time.time() - self.ticket_time < 30 * 60:
+        if self.ticket and time.time() - self.ticket_time < 30 * 60 and not new_ticket:
             return self.ticket
         else:
             self.logger.info("Fetching ticket ...")
@@ -192,10 +97,39 @@ class FChatClient(WebSocketClient):
                 self.logger.error(text_parsed['error'])
                 return None
 
+    def setup(self):
+        """
+        This function should be called before connecting to the websocket. It will get a ticket for connecting and
+        start up some required threads. It will also initialize some values.
+
+        :return: True if able to get a ticket, False if unable to get a ticket.
+        """
+
+        if self.get_ticket() is None:
+            return False
+        else:
+            self.reconnect = threading.Thread(target=self.connection_test, args=(), name="reconnect-thread")
+            self.outgoing_thread = threading.Thread(target=self.outgoing_pump, args=(), name="outgoing-thread")
+
+            # self.outgoing_thread.setDaemon(False)
+            self.outgoing_thread.start()
+
+            self.reconnect_delay = 1
+            self.reconnect_attempt = 0
+            self.reconnect.setDaemon(False)
+            self.reconnect.start()
+
+            self.connected = False
+
+            return True
+
     def outgoing_pump(self):
         self.outgoing_pump_running = True
         while self.outgoing_pump_running:
-            if len(self.outgoing_buffer):
+            if self.connected and not self.sock:
+                self.logger.info("Turning off outgoing pump thread.")
+                break
+            elif len(self.outgoing_buffer):
                 self.send_one()
                 time.sleep(self.message_delay)
             else:
@@ -203,13 +137,22 @@ class FChatClient(WebSocketClient):
 
     def connection_test(self):
         self.connection_test_running = True
+        self.last_ping_received = time.time()
         while self.connection_test_running:
-            if time.time() - self.last_ping_time > 90:
+            if time.time() - self.last_ping_sent > 30:
+                self.PIN()
+                self.last_ping_sent = time.time()
+
+            if time.time() - self.last_ping_received > 90:
                 self.logger.info("Didn't get a ping in time. Restarting.")
-                self.close_connection()
+                self.close(reason="90 seconds since last ping.")
                 break
-            else:
-                time.sleep(1)
+
+            if self.connected and not self.sock:
+                self.logger.info("Turning off ping thread.")
+                break
+            
+            time.sleep(0.1)
 
     def terminate_threads(self):
         """
@@ -229,7 +172,7 @@ class FChatClient(WebSocketClient):
         except AttributeError:
             pass  # Thread doesn't exist yet.
 
-    def opened(self):
+    def on_opened(self, ws):
         """
         Automatically called when we successfully connect to the server. Resets reconnect delays, and sends sends an
         IDN message.
@@ -238,8 +181,9 @@ class FChatClient(WebSocketClient):
         self.reconnect_attempt = 0
         self.logger.info("Connected!")
         self.IDN(self.character_name)
+        time.sleep(5) # Give the client some time to initialize before doing anything else.
 
-    def closed(self, code, reason=None):
+    def on_closed(self, ws, code, reason=None):
         """
         Automatically  called when the client is closed. Terminates threads and logs reason for closing.
 
@@ -248,9 +192,8 @@ class FChatClient(WebSocketClient):
         """
         self.logger.info("Closing (" + str(code) + ", " + str(reason) + ")!")
         self.terminate_threads()
-        super().closed(code, reason)
 
-    def received_message(self, m):
+    def received_message(self, ws, m):
         """
         Called automatically whenever a message is received from the F-Chat websocket. The first three letters will be
         the command given by the message. Everything after it will be the data in JSON form.
@@ -258,10 +201,9 @@ class FChatClient(WebSocketClient):
         :param m: Message received, UTF-8 encoded, in JSON form.
         """
 
-        msg = m.data.decode("UTF-8")
-        command = msg[:3]
+        command = m[:3]
         try:
-            json_string = msg[4:]
+            json_string = m[4:]
             data = json.loads(json_string)
         except:
             data = {}
@@ -269,6 +211,8 @@ class FChatClient(WebSocketClient):
         # Print everything not filtered out by log_filter to the logger.
         if command not in self.log_filter:
             self.logger.debug("<< %s %s" % (command, data))
+
+        self.last_ping_received = time.time()
 
         # Call the function for the command. There's probably a better way to do this, but this is at least stable, and
         # multiple if/else string checks like this are actually not very time intensive in python.
@@ -339,7 +283,12 @@ class FChatClient(WebSocketClient):
             self.on_JCH(data['character']['identity'], data['channel'], data['title'])
 
         elif command == "KID":  # Kink data
-            self.on_KID(data['type'], data['message'], data['key'], data['value'])
+            if data['type'] == 'start' or data['type'] == 'end':
+                self.on_KID(data['type'], data['character'], data['message'])
+            elif data['type'] == 'custom':
+                self.on_KID(data['type'], data['character'], data['key'], data['value'])
+            else:
+                pass
 
         elif command == "LCH":  # User left channel
             self.on_LCH(data['channel'], data['character'])
@@ -435,8 +384,11 @@ class FChatClient(WebSocketClient):
         self.buffer_lock.acquire()
         cmd, data = self.outgoing_buffer.pop(0)
         if (cmd != "PIN") or self.log_pings:
-            self.logger.debug(">> %s %s" % (cmd, data))  # Logs every outgoing message except pings.
-        self.send(cmd + " " + data)
+            self.logger.debug(">> %s %s" % (cmd, data))  # Logs every outgoing message except pings (unless otherwise specified).
+        try:
+            self.send(cmd + " " + data)
+        except AttributeError:
+            pass
         self.buffer_lock.release()
 
     def add_user(self, user):
@@ -469,8 +421,6 @@ class FChatClient(WebSocketClient):
             return self.channels[channel_id.lower()]
         except KeyError:
             return None
-
-        # return None
 
     def reconnect_stagger(self):
         self.terminate_threads()
@@ -730,7 +680,7 @@ class FChatClient(WebSocketClient):
 
         :param character: Name of your own character that just joined.
         """
-        pass
+        self.connected = True
 
     def on_JCH(self, character, channel, title):
         """
@@ -748,18 +698,18 @@ class FChatClient(WebSocketClient):
 
         self.get_channel_by_id(channel).joined(self.get_user_by_name(character))
 
-    def on_KID(self, kid_type, message, key, value):
+    def on_KID(self, kid_type, message, character='', key=None, value=None):
         """
         Kinks data in response to a KIN client command.
 
         :param kid_type: Enum of either "start", "custom", or "end".
         :param message: Message sent by server.
+        :param character: Name of character.
         :param key: Integer value. Not sure what this is yet.
         :param value: Integer value. Not sure what this is yet.
         """
         pass
 
-    #
     def on_LCH(self, channel, character):
         """
         An indicator that the given character has left the channel. This may also be the client's character.
@@ -840,7 +790,7 @@ class FChatClient(WebSocketClient):
         Ping command from the server, requiring a response, to keep the connection alive.
         """
         self.PIN()
-        self.last_ping_time = time.time()
+        self.last_ping_received = time.time()
 
     def on_PRD(self, prd_type, message, key, value):
         """
@@ -1170,7 +1120,7 @@ class FChatClient(WebSocketClient):
         :param length: Length of time in minutes
         """
         data = {'channel': channel, 'character': character, 'length': length}
-        self.send_message("STU", data)
+        self.send_message("CTU", data)
 
     def CUB(self, channel, character):
         """
@@ -1236,7 +1186,7 @@ class FChatClient(WebSocketClient):
                 'character': character,
                 'ticket': self.ticket,
                 'cname': self.client_name,
-                'cversion': '0.2.0',
+                'cversion': self.version_num,
                 'method': 'ticket'}
 
         self.send_message("IDN", data)
@@ -1337,6 +1287,7 @@ class FChatClient(WebSocketClient):
         disconnection. Sending multiple pings within 10 seconds will also disconnect you.
         """
         self.send_message("PIN", {})
+        self.last_ping_sent = time.time()
 
     def PRI(self, recipient, message):
         """
@@ -1643,3 +1594,32 @@ class FChatClient(WebSocketClient):
                 "target": target
             }
         )
+
+
+if __name__ == "__main__":
+    with open('credentials.json', "r") as json_file:
+        credentials = json.load(json_file)
+
+    test = FChatClient(
+        account=credentials['username'],
+        password=credentials['password'],
+        character=credentials['default_character']
+    )
+
+    running = True
+
+    while running:
+        try:
+            test.setup()
+            test.log_filter = ["NLN", "FLN", "LCH", "STA", "LIS"]
+            test.run_forever()
+        except KeyboardInterrupt or SystemExit:
+            test.logger.exception("Disconnected by user.")
+            running = False
+        except Exception:
+            test.logger.exception("Unknown exception!")
+            test.terminate_threads()
+            running = False
+        finally:
+            if running and test:
+                test.reconnect_stagger()

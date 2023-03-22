@@ -1,5 +1,10 @@
 # Personal bots folder
-bots/
+/bots
+fchatpy/bots/
+
+# Secret credentials file
+fchatpy/credentials.json
+/examples/credentials.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -108,3 +113,5 @@ venv.bak/
 
 # PyCharm
 .idea/
+
+/fchatpy/OLD_CLIENT.py
