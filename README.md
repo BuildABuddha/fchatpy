@@ -10,8 +10,7 @@ This library supports nearly every F-Chat command available. So you should be ab
 In bash, type the following:
 
 ```
-git clone https://github.com/BuildABuddha/fchatpy.git
-sudo python3 FChatPy/setup.py install
+pip install -i https://test.pypi.org/simple/ FChatPy==0.3.0
 ```
 
 If you're on Windows, I'd recommend installing it with an IDE such as PyCharm. 
