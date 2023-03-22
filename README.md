@@ -11,7 +11,7 @@ In bash, type the following:
 
 ```
 git clone https://github.com/BuildABuddha/fchatpy.git
-sudo python3 setup.py install
+sudo python3 FChatPy/setup.py install
 ```
 
 If you're on Windows, I'd recommend installing it with an IDE such as PyCharm. 
