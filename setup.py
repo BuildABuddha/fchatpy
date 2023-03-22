@@ -2,10 +2,10 @@ from setuptools import setup
 
 setup(
     name='FChatPy',
-    version='0.2',
+    version='0.3.0',
     author='Build-A-Buddha',
     python_requires='>=3',
-    install_requires=['ws4py>=0.5.1'],
+    install_requires=['websocket-client>=1.5.1'],
     packages=["fchatpy"],
     url='https://github.com/BuildABuddha/fchatpy'
 )

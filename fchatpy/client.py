@@ -1,106 +1,40 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
-from ws4py.client.threadedclient import WebSocketClient
+import websocket
+import threading
+import time
+import json
 import urllib
 import urllib.request
 import urllib.parse
-import json
-import time
 import logging
-import threading
+
+from fchatpy.user import User
+from fchatpy.channel import Channel
 
 
-class User(object):
-    """
-    This object class stores all the information needed to keep track of online users.
-    """
-
-    def __init__(self, name, gender, status, message):
-        self.name = name
-        self.gender = gender
-        self.status = status
-        self.message = message
-
-    def update(self, status, message):
-        self.status = status
-        self.message = message
-
-
-class Channel(object):
-    def __init__(self, channel_id, title, num_characters):
-        """
-        This object class helps you keep track of all the channels.
-
-        NOTICE: Channels have both an "id" and a "title". For public rooms, these will be exactly the same. For private
-        rooms, they will have the name of the room as the "title", and the "id" will be a string of numbers and
-        characters.
-
-        :param channel_id: Unique ID for the channel.
-        :param title: Title of the channel.
-        :param num_characters: Number of characters in the room, in integer form.
-        """
-        self.id = channel_id
-        self.title = title
-        self.mode = ""
-        self.num_characters = num_characters
-        self.character_list = []
-        self.owner = {}
-        self.channel_ops = []
-        self.description = {}
-
-    def update(self, channel_id, title, num_characters):
-        """
-        This command should usually only be used when getting a list of all rooms through either CHA or ORS.
-
-        :param channel_id: ID of the room in string form.
-        :param title: Title of the room in string form.
-        :param num_characters: Number of characters in the room in int form.
-        """
-        self.id = channel_id
-        self.title = title
-        self.num_characters = num_characters
-
-    def joined(self, character):
-        """
-        To be called when a character joins a room.
-
-        :param character: Character that just joined the room. Use the User object class.
-        """
-        if character not in self.character_list:
-            self.character_list.append(character)
-            self.num_characters += 1
-
-    def left(self, character):
-        """
-        To be called when a character leaves a room.
-
-        :param character: Character that just left the room. Use the Character object class.
-        """
-        if character in self.character_list:
-            self.character_list.remove(character)
-            self.num_characters -= 1
-
-
-class FChatClient(WebSocketClient):
+class FChatClient(websocket.WebSocketApp):
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.DEBUG)
     logger = logging.getLogger("fchat")
     log_filter = []  # Override and add the three-letter commands you want to add (in string form).
     log_pings = False  # Set to true if you want to see your outgoing pings every 30 seconds.
+    version_num = '0.3.0'
 
-    def __init__(self, url, account, password, character, client_name="Python FChat Library"):
+    def __init__(self, account, password, character, url='wss://chat.f-list.net/chat2',
+                 client_name="Python FChat Library"):
         """
-        This object class is the main meat and potatoes of this library. Calling this will initialize a client to
+        A websocket client that connects to the F-Chat websocket and handles messagages coming to/from it. Calling this will initialize a client to
         connect one character to the F-Chat websocket.
-
-        :param url: URL of the websocket. Should be either 'ws://chat.f-list.net:9722' for the public server or
-        'ws://chat.f-list.net:8722' for the test server.
         :param account: Your account's username.
         :param password: Your account's password.
         :param character: The character you want to log in to.
+        :param url: URL of the websocket. Should be 'wss://chat.f-list.net/chat2' by default but can be redirected elsewhere.
         :param client_name: Default set to "Python FChat Library".
         """
-        WebSocketClient.__init__(self, url)
+        super().__init__(
+            url, header=None, on_open=self.on_opened, on_message=self.received_message, on_error=None,
+            on_close=self.on_closed, on_ping=None, on_pong=None, on_cont_message=None, keep_running=None,
+            get_mask_key=None, cookie=None, subprotocols=None, on_data=None, socket=None
+        )
+
         self.account = account
         self.password = password
         self.character_name = character
@@ -120,9 +54,12 @@ class FChatClient(WebSocketClient):
         self.message_delay = 1
         self.ticket_time = 0
         self.ticket = ''
-        self.last_ping_time = time.time()
+        self.last_ping_received = time.time()
+        self.last_ping_sent = time.time()
 
         self.buffer_lock = threading.Lock()
+
+        self.connected = False
 
         # We want to initialize these variables only if they don't already exist.
         try:
@@ -132,42 +69,9 @@ class FChatClient(WebSocketClient):
             self.reconnect_delay = 1
             self.reconnect_attempt = 0
 
-    def setup(self):
-        """
-        This function should be called before connecting to the websocket. It will get a ticket for connecting and
-        start up some required threads. It will also initialize some values.
-
-        :return: True if able to get a ticket, False if unable to get a ticket.
-        """
-
-        if self.get_ticket() is None:
-            return False
-        else:
-            self.reconnect = threading.Thread(target=self.connection_test, args=(), name="reconnect-thread")
-            self.outgoing_thread = threading.Thread(target=self.outgoing_pump, args=(), name="outgoing-thread")
-
-            # self.outgoing_thread.setDaemon(False)
-            self.outgoing_thread.start()
-
-            self.reconnect_delay = 1
-            self.reconnect_attempt = 0
-            # self.reconnect.setDaemon(False)
-            self.reconnect.start()
-
-            return True
-
-    def connect(self):
-        """
-        This function is called first thing whenever we're connected. If you want to do something like set your status
-        or join rooms immediately upon joining F-Chat, you will do it by overriding this function.
-        """
-        super().connect()
-        time.sleep(3)  # We should give the client some time to initialize before trying to do stuff.
-
     def get_ticket(self, new_ticket=False):
         """
         Will request a ticket from F-List.net. This ticket is required to connect to the websocket.
-
         :return: If successful, returns ticket. If not successful, returns None.
         """
 
@@ -192,10 +96,38 @@ class FChatClient(WebSocketClient):
                 self.logger.error(text_parsed['error'])
                 return None
 
+    def setup(self):
+        """
+        This function should be called before connecting to the websocket. It will get a ticket for connecting and
+        start up some required threads. It will also initialize some values.
+        :return: True if able to get a ticket, False if unable to get a ticket.
+        """
+
+        if self.get_ticket() is None:
+            return False
+        else:
+            self.reconnect = threading.Thread(target=self.connection_test, args=(), name="reconnect-thread")
+            self.outgoing_thread = threading.Thread(target=self.outgoing_pump, args=(), name="outgoing-thread")
+
+            # self.outgoing_thread.setDaemon(False)
+            self.outgoing_thread.start()
+
+            self.reconnect_delay = 1
+            self.reconnect_attempt = 0
+            self.reconnect.setDaemon(False)
+            self.reconnect.start()
+
+            self.connected = False
+
+            return True
+
     def outgoing_pump(self):
         self.outgoing_pump_running = True
         while self.outgoing_pump_running:
-            if len(self.outgoing_buffer):
+            if self.connected and not self.sock:
+                self.logger.info("Turning off outgoing pump thread.")
+                break
+            elif len(self.outgoing_buffer):
                 self.send_one()
                 time.sleep(self.message_delay)
             else:
@@ -203,17 +135,22 @@ class FChatClient(WebSocketClient):
 
     def connection_test(self):
         self.connection_test_running = True
-        self.last_ping_time = time.time()
+        self.last_ping_received = time.time()
         while self.connection_test_running:
-            if time.time() - self.last_ping_time > 30:
+            if time.time() - self.last_ping_sent > 30:
                 self.PIN()
-                last_ping_sent = time.time()
-            if time.time() - self.last_ping_time > 90:
+                self.last_ping_sent = time.time()
+
+            if time.time() - self.last_ping_received > 90:
                 self.logger.info("Didn't get a ping in time. Restarting.")
                 self.close(reason="90 seconds since last ping.")
                 break
-            else:
-                time.sleep(1)
+
+            if self.connected and not self.sock:
+                self.logger.info("Turning off ping thread.")
+                break
+
+            time.sleep(0.1)
 
     def terminate_threads(self):
         """
@@ -233,7 +170,7 @@ class FChatClient(WebSocketClient):
         except AttributeError:
             pass  # Thread doesn't exist yet.
 
-    def opened(self):
+    def on_opened(self, ws):
         """
         Automatically called when we successfully connect to the server. Resets reconnect delays, and sends sends an
         IDN message.
@@ -242,30 +179,27 @@ class FChatClient(WebSocketClient):
         self.reconnect_attempt = 0
         self.logger.info("Connected!")
         self.IDN(self.character_name)
+        time.sleep(5)  # Give the client some time to initialize before doing anything else.
 
-    def closed(self, code, reason=None):
+    def on_closed(self, ws, code, reason=None):
         """
         Automatically  called when the client is closed. Terminates threads and logs reason for closing.
-
         :param code:
         :param reason:
         """
         self.logger.info("Closing (" + str(code) + ", " + str(reason) + ")!")
         self.terminate_threads()
-        super().closed(code, reason)
 
-    def received_message(self, m):
+    def received_message(self, ws, m):
         """
         Called automatically whenever a message is received from the F-Chat websocket. The first three letters will be
         the command given by the message. Everything after it will be the data in JSON form.
-
         :param m: Message received, UTF-8 encoded, in JSON form.
         """
 
-        msg = m.data.decode("UTF-8")
-        command = msg[:3]
+        command = m[:3]
         try:
-            json_string = msg[4:]
+            json_string = m[4:]
             data = json.loads(json_string)
         except:
             data = {}
@@ -274,7 +208,7 @@ class FChatClient(WebSocketClient):
         if command not in self.log_filter:
             self.logger.debug("<< %s %s" % (command, data))
 
-        self.last_ping_time = time.time()
+        self.last_ping_received = time.time()
 
         # Call the function for the command. There's probably a better way to do this, but this is at least stable, and
         # multiple if/else string checks like this are actually not very time intensive in python.
@@ -430,7 +364,6 @@ class FChatClient(WebSocketClient):
         """
         Despite the name, this doesn't immediately send out a message. Instead, it adds a message to be sent to the
         websocket to a queue. This message will be sent out with the send_one() function.
-
         :param cmd: The command to be given out, in the form of a string. Ex: "PRI"
         :param data: The data for the message in dict form. Ex: {"message": "Hello, world!", "recipient": "John Doe"}
         """
@@ -446,7 +379,8 @@ class FChatClient(WebSocketClient):
         self.buffer_lock.acquire()
         cmd, data = self.outgoing_buffer.pop(0)
         if (cmd != "PIN") or self.log_pings:
-            self.logger.debug(">> %s %s" % (cmd, data))  # Logs every outgoing message except pings.
+            self.logger.debug(
+                ">> %s %s" % (cmd, data))  # Logs every outgoing message except pings (unless otherwise specified).
         try:
             self.send(cmd + " " + data)
         except AttributeError:
@@ -484,8 +418,6 @@ class FChatClient(WebSocketClient):
         except KeyError:
             return None
 
-        # return None
-
     def reconnect_stagger(self):
         self.terminate_threads()
         self.logger.info("Trying to reconnect in %d seconds (attempt number %d) ..." % (
@@ -505,7 +437,6 @@ class FChatClient(WebSocketClient):
     def on_ADL(self, ops):
         """
         Sends the client the current list of chatops.
-
         :param ops: Array of chat operator names.
         """
         self.operators = ops
@@ -513,7 +444,6 @@ class FChatClient(WebSocketClient):
     def on_AOP(self, character):
         """
         The given character has been promoted to chatop.
-
         :param character: Name of character promoted to chat operator.
         """
         pass
@@ -521,7 +451,6 @@ class FChatClient(WebSocketClient):
     def on_BRO(self, message):
         """
         Incoming admin broadcast.
-
         :param message: Message broadcast by chat admin.
         """
         pass
@@ -530,7 +459,6 @@ class FChatClient(WebSocketClient):
         """
         Alerts the client that that the channel's description has changed. This is sent whenever a client sends a JCH to
         the server.
-
         :param channel: ID of channel getting its description changed.
         :param description: Description for the channel.
         """
@@ -543,7 +471,6 @@ class FChatClient(WebSocketClient):
         """
         Sends the client a list of all public channels.
         NOTE: For public channels, ID and name are the same!
-
         :param channels: Array of channel dictionaries with keys {"Name", "Mode", "Characters"}.
             * "Name" is both the ID and the official name of the channel.
             * "Mode" is an enum of type "chat", "ads", or "both".
@@ -560,7 +487,6 @@ class FChatClient(WebSocketClient):
     def on_CIU(self, sender, title, name):
         """
         Invites a user to a channel.
-
         :param sender: Name of character sending the invite.
         :param title: The display name for the room. (ex: "Sex Driven LFRP" or "Test Room")
         :param name: The channel ID. (ex: "Sex Driven LFRP" or "ADH-c7fc4c15c858dd76d860")
@@ -570,7 +496,6 @@ class FChatClient(WebSocketClient):
     def on_CBU(self, operator, channel, character):
         """
         Removes a user from a channel, and prevents them from re-entering.
-
         :param operator: Channel operator giving the command.
         :param channel: ID of channel the character is getting removed from.
         :param character: Name of the character getting removed.
@@ -580,7 +505,6 @@ class FChatClient(WebSocketClient):
     def on_CKU(self, operator, channel, character):
         """
         Kicks a user from a channel.
-
         :param operator: Channel operator giving the command.
         :param channel: ID of the channel the character is getting kicked from.
         :param character: Name of the character getting kicked.
@@ -594,7 +518,6 @@ class FChatClient(WebSocketClient):
     def on_COA(self, character, channel):
         """
         Promotes a user to channel operator.
-
         :param character: Name of character getting promoted.
         :param channel: ID of the channel the character is now operator of.
         """
@@ -607,10 +530,8 @@ class FChatClient(WebSocketClient):
     def on_COL(self, channel, oplist):
         """
         Gives a list of channel ops. Sent in response to JCH.
-
         :param channel: ID of the channel.
         :param oplist: Array of channel operator names.
-
         Note: First name in oplist will be the owner. If no owner, will be "".
         """
 
@@ -625,7 +546,6 @@ class FChatClient(WebSocketClient):
         """
         After connecting and identifying you will receive a CON command, giving the number of connected users to the
         network.
-
         :param count: Integer for number of connected users.
         """
         pass
@@ -633,7 +553,6 @@ class FChatClient(WebSocketClient):
     def on_COR(self, character, channel):
         """
         Removes a channel operator.
-
         :param character: Name of character getting removed.
         :param channel: ID/name of the channel.
         """
@@ -646,7 +565,6 @@ class FChatClient(WebSocketClient):
     def on_CSO(self, character, channel):
         """
         Sets the owner of the current channel to the character provided.
-
         :param character: Name of the character who now owns the channel.
         :param channel: ID/name of the channel.
         """
@@ -659,7 +577,6 @@ class FChatClient(WebSocketClient):
     def on_CTU(self, operator, channel, length, character):
         """
         Temporarily bans a user from the channel for 1-90 minutes. A channel timeout.
-
         :param operator: Name of operator giving the command.
         :param channel: ID/name of the channel.
         :param length: Integer for number of minutes user is timed out.
@@ -674,7 +591,6 @@ class FChatClient(WebSocketClient):
     def on_DOP(self, character):
         """
         The given character has been stripped of chatop status.
-
         :param character: Name of the character stripped of chat operator status.
         """
         pass
@@ -682,7 +598,6 @@ class FChatClient(WebSocketClient):
     def on_ERR(self, message, number):
         """
         Indicates that the given error has occurred.
-
         :param message: Error message given from server.
         :param number: Integer representing error number.
         """
@@ -691,7 +606,6 @@ class FChatClient(WebSocketClient):
     def on_FKS(self, characters, kinks):
         """
         Sent by as a response to the client's FKS command, containing the results of the search.
-
         :param characters: Array of character names from search result.
         :param kinks: Array of kink IDs from the search result.
         """
@@ -700,7 +614,6 @@ class FChatClient(WebSocketClient):
     def on_FLN(self, character):
         """
         Sent by the server to inform the client a given character went offline.
-
         :param character: Name of character that went offline.
         """
 
@@ -715,7 +628,6 @@ class FChatClient(WebSocketClient):
     def on_HLO(self, message):
         """
         Server hello command. Tells which server version is running and who wrote it.
-
         :param message: Message sent from the server.
         """
         pass
@@ -723,7 +635,6 @@ class FChatClient(WebSocketClient):
     def on_ICH(self, users, channel, mode):
         """
         Initial channel data. Received in response to JCH, along with CDS.
-
         :param users: Array of objects with the syntax {'identity'}
         :param channel: ID/name of channel.
         :param mode: Current mode for the channel. Can be "ads", "chat", or "both".
@@ -741,15 +652,13 @@ class FChatClient(WebSocketClient):
         """
         Used to inform the client their identification is successful, and handily sends their character name along with
         it.
-
         :param character: Name of your own character that just joined.
         """
-        pass
+        self.connected = True
 
     def on_JCH(self, character, channel, title):
         """
         Indicates the given user has joined the given channel. This may also be the client's character.
-
         :param character: Character that just joined.
         :param channel: ID of the channel. Same as title if public, but not if private.
         :param title: Name of the channel.
@@ -765,7 +674,6 @@ class FChatClient(WebSocketClient):
     def on_KID(self, kid_type, message, character='', key=None, value=None):
         """
         Kinks data in response to a KIN client command.
-
         :param kid_type: Enum of either "start", "custom", or "end".
         :param message: Message sent by server.
         :param character: Name of character.
@@ -774,11 +682,9 @@ class FChatClient(WebSocketClient):
         """
         pass
 
-    #
     def on_LCH(self, channel, character):
         """
         An indicator that the given character has left the channel. This may also be the client's character.
-
         :param channel: ID for the channel.
         :param character: Name of the character that's left.
         """
@@ -788,7 +694,6 @@ class FChatClient(WebSocketClient):
     def on_LIS(self, characters):
         """
         Sends an array of all the online characters and their gender, status, and status message.
-
         :param characters: Array of character arrays with format ["Name", "Gender", "Status", "Status Message"].
         """
 
@@ -798,7 +703,6 @@ class FChatClient(WebSocketClient):
     def on_NLN(self, identity, gender, status):
         """
         A user connected.
-
         :param identity: Character name for user connected.
         :param gender: Gender of character connected.
         :param status: Enum for status. Should always be "online" since they just joined.
@@ -810,7 +714,6 @@ class FChatClient(WebSocketClient):
     def on_IGN(self, action, character=None, characters=None):
         """
         Handles the ignore list.
-
         :param action: String indicating what the message is telling us. Possible values may be:
             init: Sends the initial ignore list. Uses characters:[string] to send an array of character names.
             add: Acknowledges the addition of a character to the ignore list. Uses character:"string".
@@ -828,7 +731,6 @@ class FChatClient(WebSocketClient):
     def on_FRL(self, characters):
         """
         Initial friends list.
-
         :param characters: Array of names of characters in friends list.
         """
         self.friends = characters
@@ -836,7 +738,6 @@ class FChatClient(WebSocketClient):
     def on_ORS(self, channels):
         """
         Gives a list of open private rooms.
-
         :param channels: Array of channel dictionaries with keys {"Name", "Characters", "Title"}.
             Name: ID of private room. Usually a string of random numbers and letters.
             Characters: Integer value for number of characters in the room.
@@ -855,12 +756,11 @@ class FChatClient(WebSocketClient):
         Ping command from the server, requiring a response, to keep the connection alive.
         """
         self.PIN()
-        self.last_ping_time = time.time()
+        self.last_ping_received = time.time()
 
     def on_PRD(self, prd_type, message, key, value):
         """
         Profile data commands sent in response to a PRO client command.
-
         :param prd_type: Enumerator of type "start", "info", "select", and "end".
         :param message: Message sent by the server.
         :param key: Integer. Not sure what this does.
@@ -871,7 +771,6 @@ class FChatClient(WebSocketClient):
     def on_PRI(self, character, message):
         """
         A private message is received from another user.
-
         :param character: Name of the character sending the message.
         :param message: Message sent by the character.
         """
@@ -880,7 +779,6 @@ class FChatClient(WebSocketClient):
     def on_MSG(self, character, message, channel):
         """
         A message is received from a user in a channel.
-
         :param character: Name of the character sending the message.
         :param message: Message sent by the character.
         :param channel: ID of the channel.
@@ -890,7 +788,6 @@ class FChatClient(WebSocketClient):
     def on_LRP(self, channel, message, character):
         """
         A roleplay ad is received from a user in a channel.
-
         :param channel: ID of the channel being sent the message.
         :param message: Message being sent to the channel.
         :param character: Name of the character sending the message.
@@ -900,7 +797,6 @@ class FChatClient(WebSocketClient):
     def on_RLL(self, channel, rll_type, character, message, results=None, rolls=None, endresult=None, target=None):
         """
         Rolls dice or spins the bottle.
-
         :param channel: ID of channel the roll is happening in.
         :param rll_type: Enumerator of type "dice" or "bottle".
         :param character: Name of the character who called the command.
@@ -915,7 +811,6 @@ class FChatClient(WebSocketClient):
     def on_RMO(self, mode, channel):
         """
         Change room mode to accept chat, ads, or both.
-
         :param mode: Enumerator of type "chat", "ads", or "both".
         :param channel: ID of the channel being changed.
         """
@@ -924,7 +819,6 @@ class FChatClient(WebSocketClient):
     def on_RTB(self, rtb_type, name=None, sender=None, note_id=None, subject=None):
         """
         Real-time bridge. Indicates the user received a note or message, right at the very moment this is received.
-
         :param rtb_type: Enum of either "trackadd", "trackrem", "friendadd", "friendremove", "friendrequest", or "note".
         :param name: Optional variable for 'trackadd', 'trackrem', 'friendadd', 'friendremove', or 'friendrequest'. Name
         of the character involved.
@@ -939,7 +833,6 @@ class FChatClient(WebSocketClient):
         Alerts admins and chatops (global moderators) of an issue.
         Note: Since I don't think any global mods will use this client, and it's kind of complicated,  I'm not going to
         bother with this one.
-
         :param data: Raw data (use only if other params do not work).
         :return:
         """
@@ -948,7 +841,6 @@ class FChatClient(WebSocketClient):
     def on_STA(self, status, character, statusmsg):
         """
         A user changed their status.
-
         :param status: Enumerator of type "online", "looking", "busy", "dnd", "idle", and "away".
         :param character: Name of the character setting their message.
         :param statusmsg: The custom message set by the character.
@@ -962,7 +854,6 @@ class FChatClient(WebSocketClient):
         An informative autogenerated message from the server. This is also the way the server responds to some commands,
         such as RST, CIU, CBL, COL, and CUB. The server will sometimes send this in concert with a response command, as
         with SFC, COA, and COR.
-
         :param channel: Optional argument. ID of the channel, if the notice is related to one.
         :param message: Message sent by the server.
         """
@@ -971,7 +862,6 @@ class FChatClient(WebSocketClient):
     def on_TPN(self, character, status):
         """
         A user informs you of his typing status.
-
         :param character: Name of the character sending the message.
         :param status: Enumerator of type "clear", "paused", and "typing".
         """
@@ -979,7 +869,6 @@ class FChatClient(WebSocketClient):
 
     def on_UPT(self, current_time, start_time, start_string, accepted, channels, users, max_users):
         """
-
         :param current_time: POSIX timestamp of the current time.
         :param start_time: POSIX timestamp of when the server was last started.
         :param start_string: Human-readable timestamp of when the server was last started.
@@ -993,7 +882,6 @@ class FChatClient(WebSocketClient):
     def on_VAR(self, variable, value):
         """
         Variables the server sends to inform the client about server variables.
-
         :param variable: Name of the variable being sent.
         :param value: The value of the variable being sent.
         """
@@ -1018,7 +906,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires chat op or higher. ---
         Request a character's account be banned from the server.
-
         :param character: Character to be banned.
         """
         data = {'character': character}
@@ -1028,7 +915,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command is admin only. ---
         Promotes a user to be a chatop (global moderator).
-
         :param character: Character to be promoted.
         """
         data = {'character': character}
@@ -1038,7 +924,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires chat op or higher. ---
         Requests a list of currently connected alts for a characters account.
-
         :param character: Character to search for alts of.
         """
         data = {'character': character}
@@ -1048,7 +933,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command is admin only. ---
         Broadcasts a message to all connections.
-
         :param message: Message to broadcast.
         """
         data = {'message': message}
@@ -1058,7 +942,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Request the channel banlist.
-
         :param channel: The channel ID you want the banlist for.
         """
         data = {'channel': channel}
@@ -1068,7 +951,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Bans a character from a channel.
-
         :param character: Character to be banned from the room.
         :param channel:  The ID for the channel you want the character banned from.
         """
@@ -1078,7 +960,6 @@ class FChatClient(WebSocketClient):
     def CCR(self, channel):
         """
         Create a private, invite-only channel.
-
         :param channel: The name for the channel you want to create.
         """
         data = {'channel': channel}
@@ -1088,7 +969,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Changes a channel's description.
-
         :param channel: Channel ID for
         :param description:
         """
@@ -1105,7 +985,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Sends an invitation for a channel to a user.
-
         :param channel: ID for the channel you're sending a request for.
         :param character: Name of the character you're sending the request to.
         """
@@ -1116,7 +995,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Kicks a user from a channel.
-
         :param channel: ID for the channel you're kicking someone from.
         :param character: Name of the character you're kicking.
         """
@@ -1127,7 +1005,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Request a character be promoted to channel operator
-
         :param channel: ID for channel.
         :param character: Name of the promoted character.
         """
@@ -1137,7 +1014,6 @@ class FChatClient(WebSocketClient):
     def COL(self, channel):
         """
         Requests the list of channel ops (channel moderators).
-
         :param channel: ID for the channel.
         """
         data = {'channel': channel}
@@ -1147,7 +1023,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Demotes a channel operator (channel moderator) to a normal user.
-
         :param channel: Channel ID
         :param character: Character getting demoted.
         """
@@ -1158,7 +1033,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command is admin only. ---
         Creates an official channel.
-
         :param channel: Channel name, I assume?
         """
         data = {'channel': channel}
@@ -1168,7 +1042,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Set a new channel owner.
-
         :param character: Name of character
         :param channel: ID of channel
         """
@@ -1179,7 +1052,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Temporarily bans a user from the channel for 1-90 minutes. A channel timeout.
-
         :param channel: Channel ID
         :param character: Character to be banned
         :param length: Length of time in minutes
@@ -1191,7 +1063,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Unbans a user from a channel.
-
         :param channel: Channel ID
         :param character: Character to be unbanned
         """
@@ -1202,7 +1073,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command is admin only. ---
         Demotes a chatop (global moderator).
-
         :param character: Character to be demoted.
         """
         data = {'character': character}
@@ -1212,7 +1082,6 @@ class FChatClient(WebSocketClient):
     def FKS(self, kinks, genders, orientations, languages, furryprefs, roles):
         """
         Search for characters fitting the user's selections. Kinks is required, all other parameters are optional.
-
         Raw sample:
         FKS {
         "kinks":["523","66"],
@@ -1222,7 +1091,6 @@ class FChatClient(WebSocketClient):
         "furryprefs":["Furs and / or humans","Humans ok, Furries Preferred","No humans, just furry characters"],
         roles:["Always dominant", "Usually dominant"]
         }
-
         :param kinks: identified by kinkids, available here, along with the full list of other parameters.
                         http://www.f-list.net/json/chat-search-getfields.json?ids=true
         :param genders: can be any of "Male", "Female", "Transgender", "Herm", "Shemale", "Male-Herm", "Cunt-boy",
@@ -1244,14 +1112,13 @@ class FChatClient(WebSocketClient):
         """
         This command is used to identify with the server.
         If you send any commands before identifying, you will be disconnected.
-
         :param character: Name of character you're logging in as.
         """
         data = {'account': self.account,
                 'character': character,
                 'ticket': self.ticket,
                 'cname': self.client_name,
-                'cversion': '0.2.0',
+                'cversion': self.version_num,
                 'method': 'ticket'}
 
         self.send_message("IDN", data)
@@ -1261,7 +1128,6 @@ class FChatClient(WebSocketClient):
         A multi-faceted command to handle actions related to the ignore list. The server does not actually handle much
         of the ignore process, as it is the client's responsibility to block out messages it receives from the server
         if that character is on the user's ignore list.
-
         :param action: Enum with the following options...
             add: adds the character to the ignore list
             delete: removes the character from the ignore list
@@ -1280,7 +1146,6 @@ class FChatClient(WebSocketClient):
     def JCH(self, channel):
         """
         Send a channel join request.
-
         :param channel: Channel ID
         """
         self.send_message("JCH", {'channel': channel})
@@ -1290,7 +1155,6 @@ class FChatClient(WebSocketClient):
         --- This command requires chat op or higher. ---
         Deletes a channel from the server.Private channel owners can destroy their own channels, but it isn't officially
         supported to do so.
-
         :param channel: ID of channel.
         """
         self.send_message("KIC", {'channel': channel})
@@ -1299,7 +1163,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires chat op or higher. ---
         Request a character be kicked from the server.
-
         :param character: Name of character being kicked.
         """
         self.send_message("KIK", {'character': character})
@@ -1307,7 +1170,6 @@ class FChatClient(WebSocketClient):
     def KIN(self, character):
         """
         Request a list of a user's kinks.
-
         :param character: Name of character.
         """
         self.send_message("KIN", {'character': character})
@@ -1315,7 +1177,6 @@ class FChatClient(WebSocketClient):
     def LCH(self, channel):
         """
         Request to leave a channel.
-
         :param channel: ID of channel
         """
         self.send_message("LCH", {'channel': channel})
@@ -1323,7 +1184,6 @@ class FChatClient(WebSocketClient):
     def LRP(self, channel, message):
         """
         Sends a chat ad to all other users in a channel.
-
         :param channel: ID of channel
         :param message: Message to be sent
         """
@@ -1333,7 +1193,6 @@ class FChatClient(WebSocketClient):
     def MSG(self, channel, message):
         """
         Sends a message to all other users in a channel.
-
         :param channel: Channel ID
         :param message: Message to be sent
         """
@@ -1352,11 +1211,11 @@ class FChatClient(WebSocketClient):
         disconnection. Sending multiple pings within 10 seconds will also disconnect you.
         """
         self.send_message("PIN", {})
+        self.last_ping_sent = time.time()
 
-    def PRI(self, recipient, message) -> object:
+    def PRI(self, recipient, message):
         """
         Sends a private message to another user.
-
         :param recipient: Name of character receiving message
         :param message: Message to be sent
         """
@@ -1366,7 +1225,6 @@ class FChatClient(WebSocketClient):
     def PRO(self, character):
         """
         Requests some of the profile tags on a character, such as Top/Bottom position and Language Preference.
-
         :param character: Name of character you're getting tags of
         """
         self.send_message("PRO", {'character': character})
@@ -1374,7 +1232,6 @@ class FChatClient(WebSocketClient):
     def RLL(self, channel, dice):
         """
         Roll dice or spin the bottle.
-
         :param channel: ID of channel
         :param dice: Enum of the following values:
                     bottle: selects one person in the room, other than the person sending the command.
@@ -1396,7 +1253,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Change room mode to accept chat, ads, or both.
-
         :param channel: ID of channel
         :param mode: Enum of following values:
                     chat: Show only MSG.
@@ -1410,7 +1266,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires channel op or higher. ---
         Sets a private room's status to closed or open. ("private" or "public")
-
         :param channel: ID of channel
         :param status: Enum of following values:
                         private: Only those who are invited can join!
@@ -1423,7 +1278,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command is admin only. ---
         Rewards a user, setting their status to 'crown' until they change it or log out.
-
         :param character:
         """
         self.send_message("RWD", {'character': character})
@@ -1431,10 +1285,8 @@ class FChatClient(WebSocketClient):
     def SFC(self, action, report, character):
         """
         Alerts admins and chatops (global moderators) of an issue.
-
         The webclients also upload logs and have a specific formatting to "report".
         It is suspected that third-party clients cannot upload logs.
-
         :param action: the type of SFC. The client will always send "report".
         :param report: The user's complaint
         :param character: The character being reported
@@ -1446,7 +1298,6 @@ class FChatClient(WebSocketClient):
     def STA(self, status, statusmsg):
         """
         Request a new status be set for your character.
-
         :param status: Valid values are "online", "looking", "busy", "dnd", "idle", and "away"
         :param statusmsg: Status message to be set
         """
@@ -1457,7 +1308,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires chat op or higher. ---
         Times out a user for a given amount minutes.
-
         :param character: Character to be timed out
         :param timeout_time: Duration of timeout in minutes, from 1 to 90
         :param reason: Reason for timeout
@@ -1467,10 +1317,8 @@ class FChatClient(WebSocketClient):
     def TPN(self, character, status):
         """
         "User ___ is typing/stopped typing/has entered text" for private messages.
-
         It is assumed a user is no longer typing after a private message has been sent, so there is no need to send a
         TPN of clear with it.
-
         :param character: Character that you're typing to.
         :param status: Enum of "clear", "paused", and "typing".
         """
@@ -1481,7 +1329,6 @@ class FChatClient(WebSocketClient):
         """
         --- This command requires chat op or higher. ---
         Unbans a character's account from the server.
-
         :param character: Character to be unbanned
         """
         self.send_message("UNB", {'character': character})
@@ -1658,3 +1505,32 @@ class FChatClient(WebSocketClient):
                 "target": target
             }
         )
+
+
+if __name__ == "__main__":
+    with open('credentials.json', "r") as json_file:
+        credentials = json.load(json_file)
+
+    test = FChatClient(
+        account=credentials['username'],
+        password=credentials['password'],
+        character=credentials['default_character']
+    )
+
+    running = True
+
+    while running:
+        try:
+            test.setup()
+            test.log_filter = ["NLN", "FLN", "LCH", "STA", "LIS"]
+            test.run_forever()
+        except KeyboardInterrupt or SystemExit:
+            test.logger.exception("Disconnected by user.")
+            running = False
+        except Exception:
+            test.logger.exception("Unknown exception!")
+            test.terminate_threads()
+            running = False
+        finally:
+            if running and test:
+                test.reconnect_stagger()

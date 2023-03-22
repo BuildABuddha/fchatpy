@@ -10,7 +10,7 @@ This library supports nearly every F-Chat command available. So you should be ab
 In bash, type the following:
 
 ```
-python3 -m pip install git+https://github.com/BuildABuddha/fchatpy.git --upgrade
+pip install -i https://test.pypi.org/simple/ FChatPy==0.3.0
 ```
 
 If you're on Windows, I'd recommend installing it with an IDE such as PyCharm. 
@@ -26,17 +26,16 @@ For a list of commands sent to the server by you, go to: https://wiki.f-list.net
 The majority of the functions in fchat.py either send these commands to the server, or automatically run when these commands are received from the server. For example, let's write a simple bot that just echos private messages sent to it.
 
 ```python
-from fchatpy import fchat
+from fchatpy import FChatClient
 
-class EchoBot(fchat.FChatClient):    
+class EchoBot(FChatClient):    
     def on_PRI(self, character, message):
         super().on_PRI(character, message)
         self.PRI(character, message)
 
 if __name__ == "__main__":
-    bot = EchoBot('ws://chat.f-list.net:8722', 'username', 'password', 'character')
+    bot = EchoBot('username', 'password', 'character')
     bot.setup()
-    bot.connect()
     bot.run_forever()
 ```
 
@@ -44,4 +43,4 @@ As you can see, the way you create a bot is by treating the FChatClient class li
 
 Once you've created your new class, you initialize it with four variables: the websocket's address, your username, your password, and the name of the character you're using. 
 
-If you want to know what a specific command for something is, or what arguments a command uses, check the documentation for that command in the fchat.py file. 
+If you want to know what a specific command for something is, or what arguments a command uses, check the documentation for that command in the fchat.py file.
