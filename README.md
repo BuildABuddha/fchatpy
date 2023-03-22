@@ -43,4 +43,4 @@ As you can see, the way you create a bot is by treating the FChatClient class li
 
 Once you've created your new class, you initialize it with three variables: your username, your password, and the name of the character you're using. 
 
-If you want to know what a specific command for something is, or what arguments a command uses, check the documentation for that command in the fchat.py file.
+If you want to know what a specific command for something is, or what arguments a command uses, check the documentation for that command in the client.py file.
