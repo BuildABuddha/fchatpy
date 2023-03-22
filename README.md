@@ -27,17 +27,16 @@ For a list of commands sent to the server by you, go to: https://wiki.f-list.net
 The majority of the functions in fchat.py either send these commands to the server, or automatically run when these commands are received from the server. For example, let's write a simple bot that just echos private messages sent to it.
 
 ```python
-from fchatpy import fchat
+from fchatpy import FChatClient
 
-class EchoBot(fchat.FChatClient):    
+class EchoBot(FChatClient):    
     def on_PRI(self, character, message):
         super().on_PRI(character, message)
         self.PRI(character, message)
 
 if __name__ == "__main__":
-    bot = EchoBot('ws://chat.f-list.net:8722', 'username', 'password', 'character')
+    bot = EchoBot('username', 'password', 'character')
     bot.setup()
-    bot.connect()
     bot.run_forever()
 ```
 
